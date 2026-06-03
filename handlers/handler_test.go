@@ -132,7 +132,7 @@ func TestRegisterHandler(t *testing.T) {
 			payload: RegisterRequest{
 				UserID:   "user123",
 				Username: "evan",
-				Password: "securepassword",
+				Password: "SecurePassword1!",
 			},
 			expectedStatus: http.StatusCreated,
 		},
@@ -141,9 +141,27 @@ func TestRegisterHandler(t *testing.T) {
 			payload: RegisterRequest{
 				UserID:   "duplicate_user",
 				Username: "evan_clone",
-				Password: "securepassword",
+				Password: "SecurePassword1!",
 			},
 			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "Invalid UserID Format",
+			payload: RegisterRequest{
+				UserID:   "bad",
+				Username: "evan",
+				Password: "SecurePassword1!",
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name: "Invalid Password Format",
+			payload: RegisterRequest{
+				UserID:   "user1234",
+				Username: "evan",
+				Password: "weakpassword",
+			},
+			expectedStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -164,8 +182,7 @@ func TestRegisterHandler(t *testing.T) {
 func TestLoginHandler(t *testing.T) {
 	handler, mockDB := setupTestHandler()
 
-	// Seed a valid user with a known hashed password
-	hash, _ := bcrypt.GenerateFromPassword([]byte("correct_password"), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("C0rrect_P@ss!"), bcrypt.DefaultCost)
 	mockDB.CreateUser(storages.UserProfile{UserID: "valid_user"}, string(hash))
 
 	tests := []struct {
@@ -177,7 +194,7 @@ func TestLoginHandler(t *testing.T) {
 			name: "Valid Login",
 			payload: LoginRequest{
 				UserID:   "valid_user",
-				Password: "correct_password",
+				Password: "C0rrect_P@ss!",
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -185,7 +202,7 @@ func TestLoginHandler(t *testing.T) {
 			name: "Wrong Password",
 			payload: LoginRequest{
 				UserID:   "valid_user",
-				Password: "wrong_password",
+				Password: "Wr0ng_P@ssword!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -193,7 +210,7 @@ func TestLoginHandler(t *testing.T) {
 			name: "User Not Found",
 			payload: LoginRequest{
 				UserID:   "ghost_user",
-				Password: "password",
+				Password: "P@ssword123!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},
@@ -249,7 +266,7 @@ func TestRefreshHandler(t *testing.T) {
 
 func TestMeHandler(t *testing.T) {
 	handler, mockDB := setupTestHandler()
-	validUserID := "user-token-test"
+	validUserID := "user_token_test"
 	mockDB.users[validUserID] = storages.UserProfile{UserID: validUserID, Username: "token_guy"}
 
 	tests := []struct {
@@ -304,19 +321,19 @@ func TestResetPasswordHandler(t *testing.T) {
 		{
 			name:           "Valid Reset",
 			authHeader:     "Bearer " + generateValidTestToken(validUserID),
-			payload:        ResetPasswordRequest{NewPassword: "new_secure_password"},
+			payload:        ResetPasswordRequest{NewPassword: "N3w_S3cure_P@ss!"},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Missing Auth Header",
 			authHeader:     "",
-			payload:        ResetPasswordRequest{NewPassword: "new_secure_password"},
+			payload:        ResetPasswordRequest{NewPassword: "N3w_S3cure_P@ss!"},
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "Malformed JSON Body",
 			authHeader:     "Bearer " + generateValidTestToken(validUserID),
-			payload:        ResetPasswordRequest{}, // Handled by sending raw broken JSON below
+			payload:        ResetPasswordRequest{},
 			expectedStatus: http.StatusBadRequest,
 		},
 	}

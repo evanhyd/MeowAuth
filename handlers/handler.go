@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"meowauth/storages"
 
@@ -13,12 +15,17 @@ import (
 )
 
 type AuthHandler struct {
-	storage   storages.Storage
-	jwtSecret []byte
+	storage     storages.Storage
+	jwtSecret   []byte
+	userIdRegex *regexp.Regexp
 }
 
 func NewAuthHandler(storage storages.Storage, secret []byte) *AuthHandler {
-	return &AuthHandler{storage: storage, jwtSecret: secret}
+	return &AuthHandler{
+		storage:     storage,
+		jwtSecret:   secret,
+		userIdRegex: regexp.MustCompile(`(?i)^[a-z0-9_.]{6,20}$`),
+	}
 }
 
 // --- Request Structs ---
@@ -113,12 +120,56 @@ func (h *AuthHandler) getUserIDFromHeader(r *http.Request) (string, error) {
 	return h.verifyToken(parts[1])
 }
 
+func verifyPassword(s string) bool {
+	hasMinLen := len(s) >= 8
+	hasUpper := false
+	hasLower := false
+	hasNumber := false
+	hasSpecial := false
+
+	if !hasMinLen {
+		return false
+	}
+
+	for _, char := range s {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsDigit(char):
+			hasNumber = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	return hasUpper && hasLower && hasNumber && hasSpecial
+}
+
 // --- Handlers ---
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !h.userIdRegex.MatchString(req.UserID) {
+		sendError(
+			w,
+			"user id must be between 6-20 characters long consists of only letters, numbers, underscore, or period",
+			http.StatusBadRequest,
+		)
+		return
+	}
+
+	if !verifyPassword(req.Password) {
+		sendError(w,
+			"password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character",
+			http.StatusBadRequest,
+		)
 		return
 	}
 
@@ -136,7 +187,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	createdProfile, err := h.storage.CreateUser(profile, string(hash))
 	if err != nil {
-		sendError(w, "failed to create user, user_id may already exist", http.StatusConflict)
+		sendError(w, "failed to create user, user id may already exist", http.StatusConflict)
 		return
 	}
 
@@ -147,6 +198,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Filter out obviously bad credentials.
+	if !h.userIdRegex.MatchString(req.UserID) || !verifyPassword(req.Password) {
+		sendError(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
@@ -222,6 +279,14 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sendError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !verifyPassword(req.NewPassword) {
+		sendError(w,
+			"password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character",
+			http.StatusBadRequest,
+		)
 		return
 	}
 
