@@ -8,7 +8,17 @@ import (
 	"meowauth/storages"
 	"net/http"
 	"os"
+	"time"
 )
+
+func cleanUpTokens(storage storages.Storage) {
+	ticker := time.NewTicker(24 * time.Hour)
+	for range ticker.C {
+		if err := storage.DeleteAllExpiredSessions(); err != nil {
+			slog.Error("failed to clean up expired tokens", "error", err)
+		}
+	}
+}
 
 func main() {
 	logFlag := flag.String("log", "", "The log file path.")
@@ -35,14 +45,16 @@ func main() {
 	}
 	defer storage.Close()
 
+	go cleanUpTokens(storage)
+
 	// Start the server.
 	authAPI := handlers.NewAuthHandler(storage, jwtKey)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /register", authAPI.RegisterService)
-	mux.HandleFunc("POST /login", authAPI.LoginService)
-	mux.HandleFunc("POST /refresh", authAPI.RefreshService)
-	mux.HandleFunc("POST /reset_password", authAPI.ResetPasswordService)
-	mux.HandleFunc("GET /me", authAPI.MeService)
+	mux.HandleFunc("POST /auth/register", authAPI.RegisterService)
+	mux.HandleFunc("POST /auth/login", authAPI.LoginService)
+	mux.HandleFunc("POST /auth/refresh", authAPI.RefreshService)
+	mux.HandleFunc("POST /auth/reset-password", authAPI.ResetPasswordService)
+	mux.HandleFunc("GET /users/me", authAPI.MeService)
 
 	slog.Info("server starting", "port", *portFlag)
 	if err := http.ListenAndServe(":"+*portFlag, mux); err != nil {

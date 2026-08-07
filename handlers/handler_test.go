@@ -97,6 +97,10 @@ func (m *MockStorage) DeleteAllSessions(UserId string) error {
 	return nil
 }
 
+func (m *MockStorage) DeleteAllExpiredSessions() error {
+	panic("not implemented")
+}
+
 func generateTestJWT(subject string, secret []byte) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject: subject,
@@ -249,7 +253,7 @@ func TestRefreshService(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
-		body           interface{}
+		body           any
 		expectedStatus int
 	}{
 		{
@@ -315,7 +319,7 @@ func TestResetPasswordService(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
-		body           interface{}
+		body           any
 		expectedStatus int
 	}{
 		{

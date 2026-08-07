@@ -168,3 +168,8 @@ func (s *SQLiteStorage) DeleteAllSessions(userId string) error {
 	_, err := s.db.Exec("DELETE FROM user_session WHERE user_id = ?", userId)
 	return err
 }
+
+func (s *SQLiteStorage) DeleteAllExpiredSessions() error {
+	_, err := s.db.Exec("DELETE FROM user_session WHERE expires_at < ?", time.Now().Unix())
+	return err
+}

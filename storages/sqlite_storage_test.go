@@ -287,3 +287,67 @@ func TestDeleteAllSessions(t *testing.T) {
 		t.Errorf("DeleteAllSessions incorrectly affected other users, expected 1 session left, found %d", count)
 	}
 }
+
+func TestDeleteAllExpiredSessions(t *testing.T) {
+	storage := setupTestDB(t)
+
+	now := time.Now().Unix()
+	userID := "test_user_1"
+
+	// 1. Insert a dummy user to satisfy the foreign key constraint
+	_, err := storage.db.Exec(`
+		INSERT INTO user_profile (user_id, username, language, registration_date) 
+		VALUES (?, ?, ?, ?)`,
+		userID, "test_user", 0, now,
+	)
+	if err != nil {
+		t.Fatalf("Failed to insert user profile: %v", err)
+	}
+
+	// 2. Insert an expired session (1 hour in the past)
+	_, err = storage.db.Exec(`
+		INSERT INTO user_session (token, user_id, created_at, expires_at) 
+		VALUES (?, ?, ?, ?)`,
+		"token_expired", userID, now-7200, now-3600,
+	)
+	if err != nil {
+		t.Fatalf("Failed to insert expired session: %v", err)
+	}
+
+	// 3. Insert an active session (1 hour in the future)
+	_, err = storage.db.Exec(`
+		INSERT INTO user_session (token, user_id, created_at, expires_at) 
+		VALUES (?, ?, ?, ?)`,
+		"token_active", userID, now, now+3600,
+	)
+	if err != nil {
+		t.Fatalf("Failed to insert active session: %v", err)
+	}
+
+	// 4. Execute the method under test
+	err = storage.DeleteAllExpiredSessions()
+	if err != nil {
+		t.Fatalf("DeleteAllExpiredSessions returned an error: %v", err)
+	}
+
+	// 5. Verify the results
+	var count int
+	err = storage.db.QueryRow("SELECT COUNT(*) FROM user_session").Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query remaining sessions count: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("Expected 1 session to remain in DB, got %d", count)
+	}
+
+	var remainingToken string
+	err = storage.db.QueryRow("SELECT token FROM user_session").Scan(&remainingToken)
+	if err != nil {
+		t.Fatalf("Failed to query remaining session token: %v", err)
+	}
+
+	if remainingToken != "token_active" {
+		t.Errorf("Expected remaining session to be 'token_active', got '%s'", remainingToken)
+	}
+}

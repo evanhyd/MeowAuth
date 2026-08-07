@@ -16,6 +16,7 @@ type SessionAccessor interface {
 	CreateSession(userId string) (UserSession, error)
 	RefreshSession(token string) (UserSession, error)
 	DeleteAllSessions(userId string) error
+	DeleteAllExpiredSessions() error
 }
 
 type Storage interface {
