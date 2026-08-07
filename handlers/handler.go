@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
+	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"meowauth/storages"
 
@@ -15,291 +16,234 @@ import (
 )
 
 type AuthHandler struct {
-	storage     storages.Storage
-	jwtSecret   []byte
-	userIdRegex *regexp.Regexp
+	storage storages.Storage
+	secret  []byte
 }
 
-func NewAuthHandler(storage storages.Storage, secret []byte) *AuthHandler {
-	return &AuthHandler{
-		storage:     storage,
-		jwtSecret:   secret,
-		userIdRegex: regexp.MustCompile(`(?i)^[a-z0-9_.]{6,20}$`),
-	}
+func NewAuthHandler(storage storages.Storage, jwtSecret []byte) *AuthHandler {
+	return &AuthHandler{storage: storage, secret: jwtSecret}
 }
 
-// --- Request Structs ---
-
-type RegisterRequest struct {
-	UserID   string            `json:"user_id"`
-	Username string            `json:"username"`
-	Password string            `json:"password"`
-	Language storages.Language `json:"language"`
-}
-
-type LoginRequest struct {
-	UserID   string `json:"user_id"`
-	Password string `json:"password"`
-}
-
-type RefreshRequest struct {
-	Token string `json:"token"`
-}
-
-type ResetPasswordRequest struct {
-	NewPassword string `json:"new_password"`
-}
-
-// --- Response Structs ---
-
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
-
-type AuthResponse struct {
-	SessionID int64  `json:"session_id"`
-	UserID    string `json:"user_id"`
-	Token     string `json:"token"`
-	ExpiresAt int64  `json:"expires_at"`
-}
-
-type SuccessResponse struct {
-	Status string `json:"status"`
-}
-
-// --- Helpers ---
-
-func sendJSON(w http.ResponseWriter, code int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(payload)
-}
-
-func sendError(w http.ResponseWriter, msg string, code int) {
-	sendJSON(w, code, ErrorResponse{Error: msg})
-}
-
-// verifyToken checks the JWT signature and extracts the user id.
-func (h *AuthHandler) verifyToken(tokenString string) (string, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return h.jwtSecret, nil
+// Extract token information.
+func (h *AuthHandler) verifyToken(tokenString string) (*jwt.RegisteredClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{}, func(token *jwt.Token) (any, error) {
+		return h.secret, nil
 	})
 
-	if err != nil || !token.Valid {
-		return "", errors.New("invalid or expired token")
+	if err != nil {
+		return nil, err
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", errors.New("invalid token claims structure")
+	if claims, ok := token.Claims.(*jwt.RegisteredClaims); ok && token.Valid {
+		return claims, nil
 	}
-
-	userID, ok := claims["sub"].(string)
-	if !ok {
-		return "", errors.New("user_id (sub) missing from token")
-	}
-
-	return userID, nil
+	return nil, errors.New("invalid token claims")
 }
 
-// Helper to extract and verify the JWT from the Authorization header
-func (h *AuthHandler) getUserIDFromHeader(r *http.Request) (string, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", errors.New("missing authorization header")
-	}
-
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		return "", errors.New("invalid authorization header format")
-	}
-
-	return h.verifyToken(parts[1])
-}
-
-func verifyPassword(s string) bool {
-	hasMinLen := len(s) >= 8
-	hasUpper := false
-	hasLower := false
-	hasNumber := false
-	hasSpecial := false
-
-	if !hasMinLen {
+// 3-20 characters long, contains only alphanumeric characters, and has at least one letter.
+func (h *AuthHandler) isValidUserId(userId string) bool {
+	length := utf8.RuneCountInString(userId)
+	if length < 3 || length > 20 {
 		return false
 	}
 
-	for _, char := range s {
+	hasLetter := false
+	for _, char := range userId {
+		if !unicode.IsLetter(char) && !unicode.IsNumber(char) {
+			return false
+		}
+		if unicode.IsLetter(char) {
+			hasLetter = true
+		}
+	}
+
+	return hasLetter
+}
+
+// 8-30 characters long and contains at least one letter, one number, and one special character.
+func (h *AuthHandler) isValidPassword(password string) bool {
+	length := utf8.RuneCountInString(password)
+	if length < 8 || length > 30 {
+		return false
+	}
+
+	var hasLetter, hasNumber, hasSpecial bool
+	for _, char := range password {
 		switch {
-		case unicode.IsUpper(char):
-			hasUpper = true
-		case unicode.IsLower(char):
-			hasLower = true
-		case unicode.IsDigit(char):
+		case unicode.IsLetter(char):
+			hasLetter = true
+		case unicode.IsNumber(char): // Matches digits in many scripts
 			hasNumber = true
 		case unicode.IsPunct(char) || unicode.IsSymbol(char):
 			hasSpecial = true
 		}
 	}
 
-	return hasUpper && hasLower && hasNumber && hasSpecial
+	return hasLetter && hasNumber && hasSpecial
 }
 
-// --- Handlers ---
+func (h *AuthHandler) RegisterService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "invalid request body", http.StatusBadRequest)
+		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	if !h.userIdRegex.MatchString(req.UserID) {
-		sendError(
-			w,
-			"user id must be between 6-20 characters long consists of only letters, numbers, underscore, or period",
-			http.StatusBadRequest,
-		)
+	if !h.isValidUserId(req.UserId) {
+		sendError(w, http.StatusBadRequest, "invalid user_id format")
+		return
+	}
+	if !h.isValidPassword(req.Password) {
+		sendError(w, http.StatusBadRequest, "invalid password format")
 		return
 	}
 
-	if !verifyPassword(req.Password) {
-		sendError(w,
-			"password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character",
-			http.StatusBadRequest,
-		)
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		sendError(w, "internal server error", http.StatusInternalServerError)
+		sendError(w, http.StatusInternalServerError, "failed to process password")
 		return
 	}
 
 	profile := storages.UserProfile{
-		UserID:   req.UserID,
-		Username: req.Username,
-		Language: req.Language,
+		UserId:           req.UserId,
+		Username:         req.Username,
+		Language:         req.Language,
+		RegistrationDate: time.Now().Unix(),
 	}
 
-	createdProfile, err := h.storage.CreateUser(profile, string(hash))
+	createdProfile, err := h.storage.CreateUser(profile, string(hashedPassword))
 	if err != nil {
-		sendError(w, "failed to create user, user id may already exist", http.StatusConflict)
+		sendError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 
-	sendJSON(w, http.StatusCreated, createdProfile)
+	sendJSON(w, http.StatusCreated, RegisterResponse{Profile: createdProfile})
 }
 
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) LoginService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "invalid request body", http.StatusBadRequest)
+		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	// Filter out obviously bad credentials.
-	if !h.userIdRegex.MatchString(req.UserID) || !verifyPassword(req.Password) {
-		sendError(w, "invalid credentials", http.StatusUnauthorized)
-		return
-	}
-
-	cred, err := h.storage.GetUserCredential(req.UserID)
+	hash, err := h.storage.GetUserPasswordHash(req.UserId)
 	if err != nil {
-		sendError(w, "invalid credentials", http.StatusUnauthorized)
+		sendError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(cred.PasswordHash), []byte(req.Password)); err != nil {
-		sendError(w, "invalid credentials", http.StatusUnauthorized)
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
+		sendError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
-	session, err := h.storage.CreateSession(req.UserID)
+	session, err := h.storage.CreateSession(req.UserId)
 	if err != nil {
-		sendError(w, "failed to create session", http.StatusInternalServerError)
+		sendError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	sendJSON(w, http.StatusOK, AuthResponse{
-		SessionID: session.SessionID,
-		UserID:    session.UserID,
-		Token:     session.Token,
-		ExpiresAt: session.ExpiresAt,
-	})
+	sendJSON(w, http.StatusOK, LoginResponse{Token: session.Token})
 }
 
-func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) RefreshService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
 	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "invalid request body", http.StatusBadRequest)
+		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	session, err := h.storage.RefreshSession(req.Token)
+	newSession, err := h.storage.RefreshSession(req.Token)
 	if err != nil {
-		sendError(w, "invalid or expired session token", http.StatusUnauthorized)
+		sendError(w, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
 
-	sendJSON(w, http.StatusOK, AuthResponse{
-		SessionID: session.SessionID,
-		UserID:    session.UserID,
-		Token:     session.Token,
-		ExpiresAt: session.ExpiresAt,
-	})
+	sendJSON(w, http.StatusOK, RefreshResponse{Token: newSession.Token})
 }
 
-func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
-	userID, err := h.getUserIDFromHeader(r)
-	if err != nil {
-		sendError(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
-		return
-	}
-
-	profile, err := h.storage.GetUserProfile(userID)
-	if err != nil {
-		sendError(w, "user not found", http.StatusNotFound)
-		return
-	}
-
-	sendJSON(w, http.StatusOK, profile)
-}
-
-func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
-	userID, err := h.getUserIDFromHeader(r)
-	if err != nil {
-		sendError(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+func (h *AuthHandler) ResetPasswordService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "invalid request body", http.StatusBadRequest)
+		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	if !verifyPassword(req.NewPassword) {
-		sendError(w,
-			"password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character",
-			http.StatusBadRequest,
-		)
+	if !h.isValidPassword(req.NewPassword) {
+		sendError(w, http.StatusBadRequest, "invalid new password format")
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	verifiedToken, err := h.verifyToken(req.Token)
 	if err != nil {
-		sendError(w, "internal server error", http.StatusInternalServerError)
+		sendError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
 
-	if err := h.storage.UpdateUserCredential(userID, string(hash)); err != nil {
-		sendError(w, "failed to update password", http.StatusInternalServerError)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, "failed to process password")
 		return
 	}
 
-	sendJSON(w, http.StatusOK, SuccessResponse{Status: "password updated successfully"})
+	if err := h.storage.UpdateUserPassword(verifiedToken.Subject, string(hashedPassword)); err != nil {
+		sendError(w, http.StatusInternalServerError, "failed to update password")
+		return
+	}
+
+	if err := h.storage.DeleteAllSessions(verifiedToken.Subject); err != nil {
+		sendError(w, http.StatusInternalServerError, "failed to invalidate existing sessions")
+		return
+	}
+
+	sendJSON(w, http.StatusOK, ResetPasswordResponse{})
+}
+
+func (h *AuthHandler) MeService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		sendError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+		return
+	}
+
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	verifiedToken, err := h.verifyToken(tokenString)
+	if err != nil {
+		sendError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+
+	profile, err := h.storage.GetUserProfile(verifiedToken.Subject)
+	if err != nil {
+		sendError(w, http.StatusNotFound, "user profile not found")
+		return
+	}
+
+	sendJSON(w, http.StatusOK, profile)
 }

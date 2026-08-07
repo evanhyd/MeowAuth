@@ -9,354 +9,450 @@ import (
 	"testing"
 	"time"
 
-	"meowauth/storages"
+	"meowauth/storages" // adjust import path
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// --- 1. Mock Storage Implementation ---
+// --- Mock Storage for Unit Testing ---
 
-var _ storages.Storage = &mockStorage{}
-
-type mockStorage struct {
-	users       map[string]storages.UserProfile
-	credentials map[string]storages.UserCredential
-	sessions    map[int64]storages.UserSession
+type MockStorage struct {
+	users    map[string]storages.UserProfile
+	passHash map[string]string
+	sessions map[string]storages.UserSession
 }
 
-func newMockStorage() *mockStorage {
-	return &mockStorage{
-		users:       make(map[string]storages.UserProfile),
-		credentials: make(map[string]storages.UserCredential),
-		sessions:    make(map[int64]storages.UserSession),
+func NewMockStorage() *MockStorage {
+	return &MockStorage{
+		users:    make(map[string]storages.UserProfile),
+		passHash: make(map[string]string),
+		sessions: make(map[string]storages.UserSession),
 	}
 }
 
-func (m *mockStorage) CreateUser(profile storages.UserProfile, passwordHash string) (storages.UserProfile, error) {
-	if _, exists := m.users[profile.UserID]; exists {
+func (m *MockStorage) Close() error { return nil }
+
+func (m *MockStorage) CreateUser(profile storages.UserProfile, hashedPassword string) (storages.UserProfile, error) {
+	if _, exists := m.users[profile.UserId]; exists {
 		return storages.UserProfile{}, errors.New("user already exists")
 	}
-	profile.RegistrationDate = time.Now().Unix()
-	m.users[profile.UserID] = profile
-	m.credentials[profile.UserID] = storages.UserCredential{UserID: profile.UserID, PasswordHash: passwordHash}
+	m.users[profile.UserId] = profile
+	m.passHash[profile.UserId] = hashedPassword
 	return profile, nil
 }
 
-func (m *mockStorage) GetUserProfile(userId string) (storages.UserProfile, error) {
-	if user, exists := m.users[userId]; exists {
-		return user, nil
+func (m *MockStorage) GetUserProfile(UserId string) (storages.UserProfile, error) {
+	p, ok := m.users[UserId]
+	if !ok {
+		return storages.UserProfile{}, errors.New("not found")
 	}
-	return storages.UserProfile{}, errors.New("not found")
+	return p, nil
 }
 
-func (m *mockStorage) GetUserCredential(userId string) (storages.UserCredential, error) {
-	if cred, exists := m.credentials[userId]; exists {
-		return cred, nil
-	}
-	return storages.UserCredential{}, errors.New("not found")
-}
-
-func (m *mockStorage) UpdateUserProfile(profile storages.UserProfile) error {
+func (m *MockStorage) UpdateUserProfile(profile storages.UserProfile) error {
+	m.users[profile.UserId] = profile
 	return nil
 }
 
-func (m *mockStorage) UpdateUserCredential(userId string, passwordHash string) error {
-	if cred, exists := m.credentials[userId]; exists {
-		cred.PasswordHash = passwordHash
-		m.credentials[userId] = cred
-		return nil
-	}
-	return errors.New("user not found")
+func (m *MockStorage) UpdateUserPassword(UserId string, hashedPassword string) error {
+	m.passHash[UserId] = hashedPassword
+	return nil
 }
 
-func (m *mockStorage) CreateSession(userId string) (storages.UserSession, error) {
-	sessionID := int64(len(m.sessions) + 1)
+func (m *MockStorage) GetUserPasswordHash(UserId string) (string, error) {
+	h, ok := m.passHash[UserId]
+	if !ok {
+		return "", errors.New("not found")
+	}
+	return h, nil
+}
+
+func (m *MockStorage) CreateSession(UserId string) (storages.UserSession, error) {
 	session := storages.UserSession{
-		SessionID: sessionID,
-		UserID:    userId,
-		Token:     generateValidTestToken(userId),
+		Token:     "mock_token_" + UserId,
+		UserId:    UserId,
+		CreatedAt: time.Now().Unix(),
 		ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
 	}
-	m.sessions[sessionID] = session
+	m.sessions[session.Token] = session
 	return session, nil
 }
 
-func (m *mockStorage) RefreshSession(token string) (storages.UserSession, error) {
-	if token == "invalid_token" {
-		return storages.UserSession{}, errors.New("invalid or expired session token")
+func (m *MockStorage) RefreshSession(token string) (storages.UserSession, error) {
+	s, ok := m.sessions[token]
+	if !ok {
+		return storages.UserSession{}, errors.New("invalid token")
 	}
-	return storages.UserSession{
-		SessionID: 99,
-		UserID:    "user123",
-		Token:     "new_rotated_token",
-		ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
-	}, nil
+	delete(m.sessions, token)
+	return m.CreateSession(s.UserId)
 }
 
-func (m *mockStorage) DeleteSession(sessionId int64) error { return nil }
-func (m *mockStorage) Close() error                        { return nil }
-
-// --- 2. Test Helpers ---
-
-var testSecret = []byte("super-secret-test-key")
-
-func setupTestHandler() (*AuthHandler, *mockStorage) {
-	mockDB := newMockStorage()
-	handler := NewAuthHandler(mockDB, testSecret)
-	return handler, mockDB
+func (m *MockStorage) DeleteAllSessions(UserId string) error {
+	for k, v := range m.sessions {
+		if v.UserId == UserId {
+			delete(m.sessions, k)
+		}
+	}
+	return nil
 }
 
-func generateValidTestToken(userID string) string {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": userID,
-		"exp": time.Now().Add(1 * time.Hour).Unix(),
+func generateTestJWT(subject string, secret []byte) string {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject: subject,
 	})
-	str, _ := token.SignedString(testSecret)
-	return str
+	tokenString, _ := token.SignedString(secret)
+	return tokenString
 }
 
-// --- 3. The Unit Tests ---
+// --- Test Cases ---
 
-func TestRegisterHandler(t *testing.T) {
-	handler, mockDB := setupTestHandler()
-	mockDB.CreateUser(storages.UserProfile{UserID: "duplicate_user"}, "hash")
+func TestRegisterService(t *testing.T) {
+	mockStore := NewMockStorage()
+	handler := NewAuthHandler(mockStore, []byte("secret"))
 
 	tests := []struct {
-		name           string
-		payload        RegisterRequest
-		expectedStatus int
+		name         string
+		method       string
+		payload      RegisterRequest
+		expectedCode int
 	}{
 		{
-			name: "Valid Registration",
+			name:   "Valid Registration",
+			method: http.MethodPost,
 			payload: RegisterRequest{
-				UserID:   "user123",
-				Username: "evan",
-				Password: "SecurePassword1!",
+				UserId:   "yudahe",
+				Username: "Yuda",
+				Language: storages.LangEnglish,
+				Password: "Str0ngPassword!",
 			},
-			expectedStatus: http.StatusCreated,
+			expectedCode: http.StatusCreated,
 		},
 		{
-			name: "Duplicate UserID",
+			name:   "Invalid Method",
+			method: http.MethodGet,
 			payload: RegisterRequest{
-				UserID:   "duplicate_user",
-				Username: "evan_clone",
-				Password: "SecurePassword1!",
+				UserId:   "yudahe2",
+				Password: "Str0ngPassword!",
 			},
-			expectedStatus: http.StatusConflict,
+			expectedCode: http.StatusMethodNotAllowed,
 		},
 		{
-			name: "Invalid UserID Format",
+			name:   "Invalid UserId",
+			method: http.MethodPost,
 			payload: RegisterRequest{
-				UserID:   "bad",
-				Username: "evan",
-				Password: "SecurePassword1!",
+				UserId:   "yu", // too short
+				Username: "Yuda",
+				Password: "Str0ngPassword!",
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedCode: http.StatusBadRequest,
 		},
 		{
-			name: "Invalid Password Format",
+			name:   "Invalid Password",
+			method: http.MethodPost,
 			payload: RegisterRequest{
-				UserID:   "user1234",
-				Username: "evan",
-				Password: "weakpassword",
+				UserId:   "yudahe3",
+				Username: "Yuda",
+				Password: "weak", // too short, no special char
 			},
-			expectedStatus: http.StatusBadRequest,
+			expectedCode: http.StatusBadRequest,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			reqBody, _ := json.Marshal(tc.payload)
-			req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewReader(reqBody))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.payload)
+			req := httptest.NewRequest(tt.method, "/register", bytes.NewReader(body))
 			rr := httptest.NewRecorder()
-			handler.Register(rr, req)
 
-			if rr.Code != tc.expectedStatus {
-				t.Errorf("expected status %d, got %d. Body: %s", tc.expectedStatus, rr.Code, rr.Body.String())
+			handler.RegisterService(rr, req)
+
+			if rr.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d. Body: %s", tt.expectedCode, rr.Code, rr.Body.String())
 			}
 		})
 	}
 }
 
-func TestLoginHandler(t *testing.T) {
-	handler, mockDB := setupTestHandler()
+func TestLoginService(t *testing.T) {
+	mockStore := NewMockStorage()
+	handler := NewAuthHandler(mockStore, []byte("secret"))
 
-	hash, _ := bcrypt.GenerateFromPassword([]byte("C0rrect_P@ss!"), bcrypt.DefaultCost)
-	mockDB.CreateUser(storages.UserProfile{UserID: "valid_user"}, string(hash))
+	// Pre-populate a user for login testing
+	password := "ValidP@ssw0rd!"
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	mockStore.CreateUser(storages.UserProfile{
+		UserId:   "yuda2026",
+		Username: "Yuda",
+	}, string(hashedPassword))
 
 	tests := []struct {
-		name           string
-		payload        LoginRequest
-		expectedStatus int
+		name         string
+		payload      LoginRequest
+		expectedCode int
 	}{
 		{
 			name: "Valid Login",
 			payload: LoginRequest{
-				UserID:   "valid_user",
-				Password: "C0rrect_P@ss!",
+				UserId:   "yuda2026",
+				Password: password,
 			},
-			expectedStatus: http.StatusOK,
+			expectedCode: http.StatusOK,
 		},
 		{
-			name: "Wrong Password",
+			name: "Invalid Password",
 			payload: LoginRequest{
-				UserID:   "valid_user",
-				Password: "Wr0ng_P@ssword!",
+				UserId:   "yuda2026",
+				Password: "WrongPassword!",
 			},
-			expectedStatus: http.StatusUnauthorized,
+			expectedCode: http.StatusUnauthorized,
 		},
 		{
-			name: "User Not Found",
+			name: "Non-existent User",
 			payload: LoginRequest{
-				UserID:   "ghost_user",
-				Password: "P@ssword123!",
+				UserId:   "ghostuser",
+				Password: password,
 			},
-			expectedStatus: http.StatusUnauthorized,
+			expectedCode: http.StatusUnauthorized,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			reqBody, _ := json.Marshal(tc.payload)
-			req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(reqBody))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, _ := json.Marshal(tt.payload)
+			req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewReader(body))
 			rr := httptest.NewRecorder()
-			handler.Login(rr, req)
 
-			if rr.Code != tc.expectedStatus {
-				t.Errorf("expected status %d, got %d. Body: %s", tc.expectedStatus, rr.Code, rr.Body.String())
+			handler.LoginService(rr, req)
+
+			if rr.Code != tt.expectedCode {
+				t.Errorf("Expected status %d, got %d. Body: %s", tt.expectedCode, rr.Code, rr.Body.String())
+			}
+
+			if tt.expectedCode == http.StatusOK {
+				var resp LoginResponse
+				json.NewDecoder(rr.Body).Decode(&resp)
+				if resp.Token == "" {
+					t.Errorf("Expected a token in response, got empty string")
+				}
 			}
 		})
 	}
 }
+func TestRefreshService(t *testing.T) {
+	storage := NewMockStorage()
+	handler := &AuthHandler{storage: storage}
 
-func TestRefreshHandler(t *testing.T) {
-	handler, _ := setupTestHandler()
+	// Setup valid session in mock storage
+	validSession, _ := storage.CreateSession("testuser")
 
 	tests := []struct {
 		name           string
-		payload        RefreshRequest
+		method         string
+		body           interface{}
 		expectedStatus int
 	}{
 		{
-			name:           "Valid Token Refresh",
-			payload:        RefreshRequest{Token: "valid_old_token"},
+			name:           "Valid Refresh",
+			method:         http.MethodPost,
+			body:           RefreshRequest{Token: validSession.Token},
 			expectedStatus: http.StatusOK,
 		},
 		{
-			name:           "Invalid Token Refresh",
-			payload:        RefreshRequest{Token: "invalid_token"},
+			name:           "Method Not Allowed",
+			method:         http.MethodGet,
+			body:           nil,
+			expectedStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:           "Invalid JSON",
+			method:         http.MethodPost,
+			body:           "invalid-json",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "Invalid Token",
+			method:         http.MethodPost,
+			body:           RefreshRequest{Token: "non_existent_token"},
 			expectedStatus: http.StatusUnauthorized,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			reqBody, _ := json.Marshal(tc.payload)
-			req := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewReader(reqBody))
-			rr := httptest.NewRecorder()
-			handler.Refresh(rr, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reqBody []byte
+			if str, ok := tt.body.(string); ok {
+				reqBody = []byte(str)
+			} else if tt.body != nil {
+				reqBody, _ = json.Marshal(tt.body)
+			}
 
-			if rr.Code != tc.expectedStatus {
-				t.Errorf("expected status %d, got %d", tc.expectedStatus, rr.Code)
+			req := httptest.NewRequest(tt.method, "/refresh", bytes.NewBuffer(reqBody))
+			rr := httptest.NewRecorder()
+
+			handler.RefreshService(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
 			}
 		})
 	}
 }
 
-func TestMeHandler(t *testing.T) {
-	handler, mockDB := setupTestHandler()
-	validUserID := "user_token_test"
-	mockDB.users[validUserID] = storages.UserProfile{UserID: validUserID, Username: "token_guy"}
+func TestResetPasswordService(t *testing.T) {
+	secret := []byte("testsecret")
+	storage := NewMockStorage()
+	handler := &AuthHandler{storage: storage, secret: secret}
+
+	// Setup a user and session in mock storage
+	userID := "testuser"
+	originalHash, _ := bcrypt.GenerateFromPassword([]byte("OldPass123!"), bcrypt.MinCost)
+	storage.CreateUser(storages.UserProfile{UserId: userID, Username: "Test"}, string(originalHash))
+	storage.CreateSession(userID)
+
+	validJWT := generateTestJWT(userID, secret)
 
 	tests := []struct {
 		name           string
+		method         string
+		body           interface{}
+		expectedStatus int
+	}{
+		{
+			name:   "Valid Reset",
+			method: http.MethodPost,
+			body: ResetPasswordRequest{
+				Token:       validJWT,
+				NewPassword: "NewValidPassword123!",
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Method Not Allowed",
+			method:         http.MethodGet,
+			body:           nil,
+			expectedStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:           "Invalid JSON",
+			method:         http.MethodPost,
+			body:           "invalid-json",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "Invalid Password Format",
+			method: http.MethodPost,
+			body: ResetPasswordRequest{
+				Token:       validJWT,
+				NewPassword: "weak", // Fails format validation
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:   "Invalid JWT Token",
+			method: http.MethodPost,
+			body: ResetPasswordRequest{
+				Token:       "invalid.jwt.token",
+				NewPassword: "NewValidPassword123!",
+			},
+			expectedStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reqBody []byte
+			if str, ok := tt.body.(string); ok {
+				reqBody = []byte(str)
+			} else if tt.body != nil {
+				reqBody, _ = json.Marshal(tt.body)
+			}
+
+			req := httptest.NewRequest(tt.method, "/reset-password", bytes.NewBuffer(reqBody))
+			rr := httptest.NewRecorder()
+
+			handler.ResetPasswordService(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
+		})
+	}
+
+	// Verify the session was deleted after a successful password reset
+	if len(storage.sessions) != 0 {
+		t.Errorf("expected all sessions to be deleted, found %d", len(storage.sessions))
+	}
+}
+
+func TestMeService(t *testing.T) {
+	secret := []byte("testsecret")
+	storage := NewMockStorage()
+	handler := &AuthHandler{storage: storage, secret: secret}
+
+	// Setup a user in mock storage
+	userID := "testuser"
+	storage.CreateUser(storages.UserProfile{UserId: userID, Username: "Test", Language: 0}, "hashedpass")
+
+	validJWT := generateTestJWT(userID, secret)
+	missingUserJWT := generateTestJWT("ghostuser", secret)
+
+	tests := []struct {
+		name           string
+		method         string
 		authHeader     string
 		expectedStatus int
 	}{
 		{
-			name:           "Valid Token",
-			authHeader:     "Bearer " + generateValidTestToken(validUserID),
+			name:           "Valid Request",
+			method:         http.MethodGet,
+			authHeader:     "Bearer " + validJWT,
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Method Not Allowed",
+			method:         http.MethodPost,
+			authHeader:     "Bearer " + validJWT,
+			expectedStatus: http.StatusMethodNotAllowed,
 		},
 		{
 			name:           "Missing Header",
+			method:         http.MethodGet,
 			authHeader:     "",
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name:           "Invalid Signature",
-			authHeader:     "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fakeclaims.fakesignature",
-			expectedStatus: http.StatusUnauthorized,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/me", nil)
-			if tc.authHeader != "" {
-				req.Header.Set("Authorization", tc.authHeader)
-			}
-			rr := httptest.NewRecorder()
-			handler.Me(rr, req)
-
-			if rr.Code != tc.expectedStatus {
-				t.Errorf("expected status %d, got %d", tc.expectedStatus, rr.Code)
-			}
-		})
-	}
-}
-
-func TestResetPasswordHandler(t *testing.T) {
-	handler, mockDB := setupTestHandler()
-	validUserID := "reset_guy"
-	mockDB.CreateUser(storages.UserProfile{UserID: validUserID}, "old_hash")
-
-	tests := []struct {
-		name           string
-		authHeader     string
-		payload        ResetPasswordRequest
-		expectedStatus int
-	}{
-		{
-			name:           "Valid Reset",
-			authHeader:     "Bearer " + generateValidTestToken(validUserID),
-			payload:        ResetPasswordRequest{NewPassword: "N3w_S3cure_P@ss!"},
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name:           "Missing Auth Header",
-			authHeader:     "",
-			payload:        ResetPasswordRequest{NewPassword: "N3w_S3cure_P@ss!"},
+			name:           "Invalid Header Format",
+			method:         http.MethodGet,
+			authHeader:     "Basic " + validJWT,
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
-			name:           "Malformed JSON Body",
-			authHeader:     "Bearer " + generateValidTestToken(validUserID),
-			payload:        ResetPasswordRequest{},
-			expectedStatus: http.StatusBadRequest,
+			name:           "Invalid Token",
+			method:         http.MethodGet,
+			authHeader:     "Bearer invalid.token.string",
+			expectedStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "User Not Found",
+			method:         http.MethodGet,
+			authHeader:     "Bearer " + missingUserJWT,
+			expectedStatus: http.StatusNotFound,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var reqBody []byte
-			if tc.name == "Malformed JSON Body" {
-				reqBody = []byte(`{ bad_json }`)
-			} else {
-				reqBody, _ = json.Marshal(tc.payload)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/me", nil)
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
 			}
-
-			req := httptest.NewRequest(http.MethodPut, "/password", bytes.NewReader(reqBody))
-			if tc.authHeader != "" {
-				req.Header.Set("Authorization", tc.authHeader)
-			}
-
 			rr := httptest.NewRecorder()
-			handler.ResetPassword(rr, req)
 
-			if rr.Code != tc.expectedStatus {
-				t.Errorf("expected status %d, got %d", tc.expectedStatus, rr.Code)
+			handler.MeService(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
 			}
 		})
 	}

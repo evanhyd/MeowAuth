@@ -4,19 +4,22 @@ import (
 	"io"
 )
 
-type UserStorer interface {
-	CreateUser(profile UserProfile, passwordHash string) (UserProfile, error)
+type ProfileAccessor interface {
+	CreateUser(profile UserProfile, hashedPassword string) (UserProfile, error)
 	GetUserProfile(userId string) (UserProfile, error)
-	GetUserCredential(userId string) (UserCredential, error)
+	GetUserPasswordHash(userId string) (string, error)
 	UpdateUserProfile(profile UserProfile) error
-	UpdateUserCredential(userId string, passwordHash string) error
+	UpdateUserPassword(userId string, hashedPassword string) error
+}
 
+type SessionAccessor interface {
 	CreateSession(userId string) (UserSession, error)
 	RefreshSession(token string) (UserSession, error)
-	DeleteSession(sessionId int64) error
+	DeleteAllSessions(userId string) error
 }
 
 type Storage interface {
-	UserStorer
 	io.Closer
+	ProfileAccessor
+	SessionAccessor
 }

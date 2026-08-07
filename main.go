@@ -38,11 +38,11 @@ func main() {
 	// Start the server.
 	authAPI := handlers.NewAuthHandler(storage, jwtKey)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /register", authAPI.Register)
-	mux.HandleFunc("POST /login", authAPI.Login)
-	mux.HandleFunc("POST /refresh", authAPI.Refresh)
-	mux.HandleFunc("GET /me", authAPI.Me)
-	mux.HandleFunc("PUT /reset_password", authAPI.ResetPassword)
+	mux.HandleFunc("POST /register", authAPI.RegisterService)
+	mux.HandleFunc("POST /login", authAPI.LoginService)
+	mux.HandleFunc("POST /refresh", authAPI.RefreshService)
+	mux.HandleFunc("POST /reset_password", authAPI.ResetPasswordService)
+	mux.HandleFunc("GET /me", authAPI.MeService)
 
 	slog.Info("server starting", "port", *portFlag)
 	if err := http.ListenAndServe(":"+*portFlag, mux); err != nil {

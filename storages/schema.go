@@ -10,21 +10,20 @@ const (
 )
 
 type UserProfile struct {
-	UserID           string
+	UserId           string
 	Username         string
 	Language         Language
 	RegistrationDate int64 // Unix
 }
 
 type UserCredential struct {
-	UserID       string
+	UserId       string
 	PasswordHash string
 }
 
 type UserSession struct {
-	SessionID int64
-	UserID    string
 	Token     string
+	UserId    string
 	CreatedAt int64 // Unix
 	ExpiresAt int64 // Unix
 }
