@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -116,13 +115,12 @@ func (h *AuthHandler) RegisterService(w http.ResponseWriter, r *http.Request) {
 		RegistrationDate: time.Now().Unix(),
 	}
 
-	createdProfile, err := h.storage.CreateUser(profile, string(hashedPassword))
-	if err != nil {
+	if err := h.storage.CreateUser(profile, string(hashedPassword)); err != nil {
 		sendError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 
-	sendJSON(w, http.StatusCreated, RegisterResponse{Profile: createdProfile})
+	sendJSON(w, http.StatusCreated, RegisterResponse{})
 }
 
 func (h *AuthHandler) LoginService(w http.ResponseWriter, r *http.Request) {
@@ -221,19 +219,25 @@ func (h *AuthHandler) ResetPasswordService(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *AuthHandler) MeService(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodPost {
 		sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-		sendError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+	// 1. Decode the token from the JSON body instead of the headers
+	var req MeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
-	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-	verifiedToken, err := h.verifyToken(tokenString)
+	if req.Token == "" {
+		sendError(w, http.StatusUnauthorized, "missing token in body")
+		return
+	}
+
+	// 2. Verify the token extracted from the request body
+	verifiedToken, err := h.verifyToken(req.Token)
 	if err != nil {
 		sendError(w, http.StatusUnauthorized, "invalid token")
 		return
@@ -245,5 +249,6 @@ func (h *AuthHandler) MeService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendJSON(w, http.StatusOK, profile)
+	// 3. Wrap the response in the MeResponse struct to match your design
+	sendJSON(w, http.StatusOK, MeResponse{Profile: profile})
 }

@@ -45,30 +45,30 @@ func (s *SQLiteStorage) Close() error {
 	return s.db.Close()
 }
 
-func (s *SQLiteStorage) CreateUser(profile UserProfile, hashedPassword string) (UserProfile, error) {
+func (s *SQLiteStorage) CreateUser(profile UserProfile, hashedPassword string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return UserProfile{}, err
+		return err
 	}
 	defer tx.Rollback()
 
 	_, err = tx.Exec("INSERT INTO user_profile (user_id, username, language, registration_date) VALUES (?, ?, ?, ?)",
 		profile.UserId, profile.Username, profile.Language, profile.RegistrationDate)
 	if err != nil {
-		return UserProfile{}, err
+		return err
 	}
 
 	_, err = tx.Exec("INSERT INTO user_credential (user_id, password_hash) VALUES (?, ?)",
 		profile.UserId, hashedPassword)
 	if err != nil {
-		return UserProfile{}, err
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return UserProfile{}, err
+		return err
 	}
 
-	return profile, nil
+	return nil
 }
 
 func (s *SQLiteStorage) GetUserProfile(userId string) (UserProfile, error) {

@@ -33,13 +33,13 @@ func NewMockStorage() *MockStorage {
 
 func (m *MockStorage) Close() error { return nil }
 
-func (m *MockStorage) CreateUser(profile storages.UserProfile, hashedPassword string) (storages.UserProfile, error) {
+func (m *MockStorage) CreateUser(profile storages.UserProfile, hashedPassword string) error {
 	if _, exists := m.users[profile.UserId]; exists {
-		return storages.UserProfile{}, errors.New("user already exists")
+		return errors.New("user already exists")
 	}
 	m.users[profile.UserId] = profile
 	m.passHash[profile.UserId] = hashedPassword
-	return profile, nil
+	return nil
 }
 
 func (m *MockStorage) GetUserProfile(UserId string) (storages.UserProfile, error) {
@@ -404,53 +404,57 @@ func TestMeService(t *testing.T) {
 	tests := []struct {
 		name           string
 		method         string
-		authHeader     string
+		body           any
 		expectedStatus int
 	}{
 		{
 			name:           "Valid Request",
-			method:         http.MethodGet,
-			authHeader:     "Bearer " + validJWT,
+			method:         http.MethodPost,
+			body:           MeRequest{Token: validJWT},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name:           "Method Not Allowed",
-			method:         http.MethodPost,
-			authHeader:     "Bearer " + validJWT,
+			method:         http.MethodGet,
+			body:           nil,
 			expectedStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:           "Missing Header",
-			method:         http.MethodGet,
-			authHeader:     "",
-			expectedStatus: http.StatusUnauthorized,
+			name:           "Invalid JSON",
+			method:         http.MethodPost,
+			body:           "invalid-json",
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:           "Invalid Header Format",
-			method:         http.MethodGet,
-			authHeader:     "Basic " + validJWT,
-			expectedStatus: http.StatusUnauthorized,
+			name:           "Missing Token",
+			method:         http.MethodPost,
+			body:           MeRequest{Token: ""},
+			expectedStatus: http.StatusUnauthorized, // As defined in your updated handler
 		},
 		{
 			name:           "Invalid Token",
-			method:         http.MethodGet,
-			authHeader:     "Bearer invalid.token.string",
+			method:         http.MethodPost,
+			body:           MeRequest{Token: "invalid.token.string"},
 			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			name:           "User Not Found",
-			method:         http.MethodGet,
-			authHeader:     "Bearer " + missingUserJWT,
+			method:         http.MethodPost,
+			body:           MeRequest{Token: missingUserJWT},
 			expectedStatus: http.StatusNotFound,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/me", nil)
-			if tt.authHeader != "" {
-				req.Header.Set("Authorization", tt.authHeader)
+			var reqBody []byte
+			if str, ok := tt.body.(string); ok {
+				reqBody = []byte(str)
+			} else if tt.body != nil {
+				reqBody, _ = json.Marshal(tt.body)
 			}
+
+			req := httptest.NewRequest(tt.method, "/me", bytes.NewBuffer(reqBody))
 			rr := httptest.NewRecorder()
 
 			handler.MeService(rr, req)

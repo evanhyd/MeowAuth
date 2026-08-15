@@ -35,12 +35,9 @@ func TestProfileAccessor(t *testing.T) {
 	initialPasswordHash := "hash_123"
 
 	t.Run("CreateUser", func(t *testing.T) {
-		created, err := s.CreateUser(originalProfile, initialPasswordHash)
+		err := s.CreateUser(originalProfile, initialPasswordHash)
 		if err != nil {
 			t.Fatalf("CreateUser failed: %v", err)
-		}
-		if created.UserId != userID {
-			t.Errorf("Expected userID %s, got %s", userID, created.UserId)
 		}
 	})
 
@@ -106,7 +103,7 @@ func TestSessionAccessor(t *testing.T) {
 
 	// Seed a user to satisfy the foreign key constraint on user_session
 	userID := "user-456"
-	_, err := s.CreateUser(UserProfile{
+	err := s.CreateUser(UserProfile{
 		UserId:           userID,
 		Username:         "sessionuser",
 		Language:         LangEnglish,
@@ -192,7 +189,7 @@ func TestGetUserPasswordHash(t *testing.T) {
 	}
 
 	// 1. Setup: Create user with the expected hash
-	_, err := s.CreateUser(profile, expectedHash)
+	err := s.CreateUser(profile, expectedHash)
 	if err != nil {
 		t.Fatalf("Failed to create user: %v", err)
 	}
@@ -219,23 +216,28 @@ func TestDeleteAllSessions(t *testing.T) {
 	userID := "session_del_user"
 	otherUserID := "other_user"
 
-	s.CreateUser(UserProfile{
+	err := s.CreateUser(UserProfile{
 		UserId:           userID,
 		Username:         "sessiondeleter",
 		Language:         LangEnglish,
 		RegistrationDate: time.Now().Unix(),
 	}, "dummy_hash")
+	if err != nil {
+		t.Fatalf("failed to create user")
+	}
 
-	s.CreateUser(UserProfile{
+	err = s.CreateUser(UserProfile{
 		UserId:           otherUserID,
 		Username:         "other",
 		Language:         LangEnglish,
 		RegistrationDate: time.Now().Unix(),
 	}, "dummy_hash")
+	if err != nil {
+		t.Fatalf("failed to create user")
+	}
 
 	// 1. Setup: Create multiple sessions for the target user
-	_, err := s.CreateSession(userID)
-	if err != nil {
+	if _, err := s.CreateSession(userID); err != nil {
 		t.Fatalf("Failed to create session 1: %v", err)
 	}
 

@@ -5,7 +5,7 @@ import (
 )
 
 type ProfileAccessor interface {
-	CreateUser(profile UserProfile, hashedPassword string) (UserProfile, error)
+	CreateUser(profile UserProfile, hashedPassword string) error
 	GetUserProfile(userId string) (UserProfile, error)
 	GetUserPasswordHash(userId string) (string, error)
 	UpdateUserProfile(profile UserProfile) error

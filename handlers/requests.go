@@ -28,13 +28,16 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
+type MeRequest struct {
+	Token string `json:"token"`
+}
+
 // Response
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
 type RegisterResponse struct {
-	Profile storages.UserProfile `json:"profile"`
 }
 
 type LoginResponse struct {
@@ -46,6 +49,10 @@ type RefreshResponse struct {
 }
 
 type ResetPasswordResponse struct {
+}
+
+type MeResponse struct {
+	Profile storages.UserProfile `json:"profile"`
 }
 
 // Helper
