@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -93,6 +94,8 @@ func (h *AuthHandler) RegisterService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.UserId = strings.ToLower(req.UserId)
+
 	if !h.isValidUserId(req.UserId) {
 		sendError(w, http.StatusBadRequest, "invalid user_id format")
 		return
@@ -134,6 +137,8 @@ func (h *AuthHandler) LoginService(w http.ResponseWriter, r *http.Request) {
 		sendError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+
+	req.UserId = strings.ToLower(req.UserId)
 
 	hash, err := h.storage.GetUserPasswordHash(req.UserId)
 	if err != nil {
