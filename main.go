@@ -54,7 +54,7 @@ func main() {
 	mux.HandleFunc("POST /auth/login", authAPI.LoginService)
 	mux.HandleFunc("POST /auth/refresh", authAPI.RefreshService)
 	mux.HandleFunc("POST /auth/reset-password", authAPI.ResetPasswordService)
-	mux.HandleFunc("GET /users/me", authAPI.MeService)
+	mux.HandleFunc("POST /users/me", authAPI.MeService)
 
 	slog.Info("server starting", "port", *portFlag)
 	if err := http.ListenAndServe(":"+*portFlag, mux); err != nil {
