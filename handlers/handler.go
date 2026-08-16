@@ -250,5 +250,10 @@ func (h *AuthHandler) MeService(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Wrap the response in the MeResponse struct to match your design
-	sendJSON(w, http.StatusOK, MeResponse{Profile: profile})
+	sendJSON(w, http.StatusOK, MeResponse{
+		UserId:           profile.UserId,
+		Username:         profile.Username,
+		Language:         profile.Language,
+		RegistrationDate: profile.RegistrationDate,
+	})
 }

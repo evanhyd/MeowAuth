@@ -52,7 +52,10 @@ type ResetPasswordResponse struct {
 }
 
 type MeResponse struct {
-	Profile storages.UserProfile `json:"profile"`
+	UserId           string            `json:"user_id"`
+	Username         string            `json:"username"`
+	Language         storages.Language `json:"language"`
+	RegistrationDate int64             `json:"registration_date"` // Unix
 }
 
 // Helper
