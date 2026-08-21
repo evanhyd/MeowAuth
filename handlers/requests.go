@@ -17,14 +17,14 @@ const (
 
 // Request
 type RegisterRequest struct {
-	UserId   string   `json:"user_id"`
+	UserId   string   `json:"userId"`
 	Username string   `json:"username"`
 	Language Language `json:"language"`
 	Password string   `json:"password"`
 }
 
 type LoginRequest struct {
-	UserId   string `json:"user_id"`
+	UserId   string `json:"userId"`
 	Password string `json:"password"`
 }
 
@@ -33,8 +33,8 @@ type RefreshRequest struct {
 }
 
 type ResetPasswordRequest struct {
-	Token       string `json:"token"`
-	NewPassword string `json:"new_password"`
+	Token    string `json:"token"`
+	Password string `json:"password"`
 }
 
 type MeRequest struct {
@@ -61,10 +61,10 @@ type ResetPasswordResponse struct {
 }
 
 type MeResponse struct {
-	UserId           string   `json:"user_id"`
+	UserId           string   `json:"userId"`
 	Username         string   `json:"username"`
 	Language         Language `json:"language"`
-	RegistrationDate int64    `json:"registration_date"` // Unix
+	RegistrationDate int64    `json:"registrationDate"` // Unix
 }
 
 // Helper

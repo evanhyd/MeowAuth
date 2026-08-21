@@ -326,8 +326,8 @@ func TestResetPasswordService(t *testing.T) {
 			name:   "Valid Reset",
 			method: http.MethodPost,
 			body: ResetPasswordRequest{
-				Token:       validJWT,
-				NewPassword: "NewValidPassword123!",
+				Token:    validJWT,
+				Password: "NewValidPassword123!",
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -347,8 +347,8 @@ func TestResetPasswordService(t *testing.T) {
 			name:   "Invalid Password Format",
 			method: http.MethodPost,
 			body: ResetPasswordRequest{
-				Token:       validJWT,
-				NewPassword: "weak", // Fails format validation
+				Token:    validJWT,
+				Password: "weak", // Fails format validation
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -356,8 +356,8 @@ func TestResetPasswordService(t *testing.T) {
 			name:   "Invalid JWT Token",
 			method: http.MethodPost,
 			body: ResetPasswordRequest{
-				Token:       "invalid.jwt.token",
-				NewPassword: "NewValidPassword123!",
+				Token:    "invalid.jwt.token",
+				Password: "NewValidPassword123!",
 			},
 			expectedStatus: http.StatusUnauthorized,
 		},

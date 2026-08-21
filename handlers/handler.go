@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -97,7 +98,8 @@ func (h *AuthHandler) RegisterService(w http.ResponseWriter, r *http.Request) {
 	req.UserId = strings.ToLower(req.UserId)
 
 	if !h.isValidUserId(req.UserId) {
-		sendError(w, http.StatusBadRequest, "invalid user_id format")
+		slog.Debug("invalid user id", "id", req.UserId)
+		sendError(w, http.StatusBadRequest, "invalid user id format")
 		return
 	}
 	if !h.isValidPassword(req.Password) {
@@ -193,7 +195,7 @@ func (h *AuthHandler) ResetPasswordService(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !h.isValidPassword(req.NewPassword) {
+	if !h.isValidPassword(req.Password) {
 		sendError(w, http.StatusBadRequest, "invalid new password format")
 		return
 	}
@@ -204,7 +206,7 @@ func (h *AuthHandler) ResetPasswordService(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		sendError(w, http.StatusInternalServerError, "failed to process password")
 		return
