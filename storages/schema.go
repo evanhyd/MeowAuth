@@ -1,6 +1,6 @@
 package storages
 
-type Language int64
+type Language = int64
 
 const (
 	LangEnglish Language = iota

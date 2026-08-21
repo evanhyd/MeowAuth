@@ -2,16 +2,25 @@ package handlers
 
 import (
 	"encoding/json"
-	"meowauth/storages"
 	"net/http"
+)
+
+// Enum
+type Language = int64
+
+const (
+	LangEnglish Language = iota
+	LangFrench
+	LangChinese
+	LangJapanese
 )
 
 // Request
 type RegisterRequest struct {
-	UserId   string            `json:"user_id"`
-	Username string            `json:"username"`
-	Language storages.Language `json:"language"`
-	Password string            `json:"password"`
+	UserId   string   `json:"user_id"`
+	Username string   `json:"username"`
+	Language Language `json:"language"`
+	Password string   `json:"password"`
 }
 
 type LoginRequest struct {
@@ -40,11 +49,11 @@ type ErrorResponse struct {
 type RegisterResponse struct {
 }
 
-type LoginResponse struct {
+type RefreshResponse struct {
 	Token string `json:"token"`
 }
 
-type RefreshResponse struct {
+type LoginResponse struct {
 	Token string `json:"token"`
 }
 
@@ -52,10 +61,10 @@ type ResetPasswordResponse struct {
 }
 
 type MeResponse struct {
-	UserId           string            `json:"user_id"`
-	Username         string            `json:"username"`
-	Language         storages.Language `json:"language"`
-	RegistrationDate int64             `json:"registration_date"` // Unix
+	UserId           string   `json:"user_id"`
+	Username         string   `json:"username"`
+	Language         Language `json:"language"`
+	RegistrationDate int64    `json:"registration_date"` // Unix
 }
 
 // Helper
